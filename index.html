@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>İç Hat Doluluk ve Fiyat Konsolide Görünümü</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#ffffff; --text:#1b1f24; --muted:#6b7280;
+    --border:#e3e6ea; --accent:#1f6feb; --accent-bg:#eaf2ff;
+    --good:#1a8a3d; --mid:#c98a00; --bad:#c0392b;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--text); -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1280px; margin:0 auto; padding:24px 20px 60px;}
+  header h1{font-size:22px; margin:0 0 4px;}
+  header p{margin:0; color:var(--muted); font-size:14px;}
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin:20px 0;}
+  .card{background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 16px;}
+  .card .label{font-size:12px; color:var(--muted); margin-bottom:6px;}
+  .card .value{font-size:20px; font-weight:600;}
+  .card .sub{font-size:12px; color:var(--muted); margin-top:2px;}
+  .toolbar{
+    display:flex; flex-wrap:wrap; gap:10px; align-items:center;
+    background:var(--card); border:1px solid var(--border); border-radius:10px;
+    padding:12px 14px; margin-bottom:14px; position:sticky; top:10px; z-index:5;
+  }
+  .seg{display:flex; gap:4px; background:#eef0f3; border-radius:8px; padding:3px;}
+  .seg button{
+    border:none; background:transparent; padding:6px 12px; font-size:13px;
+    border-radius:6px; cursor:pointer; color:var(--text);
+  }
+  .seg button.active{background:var(--accent); color:white;}
+  select, input[type="text"]{
+    border:1px solid var(--border); border-radius:8px; padding:7px 10px;
+    font-size:13px; background:white; color:var(--text);
+  }
+  select{min-width:160px;}
+  input[type="text"]{min-width:200px; flex:1;}
+  .toolbar .spacer{flex:1;}
+  .count-pill{font-size:12px; color:var(--muted); white-space:nowrap;}
+  .table-wrap{
+    background:var(--card); border:1px solid var(--border); border-radius:10px;
+    overflow:auto; max-height:70vh;
+  }
+  table{border-collapse:collapse; width:100%; font-size:13px; min-width:900px;}
+  thead th{
+    position:sticky; top:0; background:#fafbfc; border-bottom:1px solid var(--border);
+    text-align:left; padding:10px 10px; cursor:pointer; white-space:nowrap; user-select:none;
+    color:#374151;
+  }
+  thead th:hover{background:var(--accent-bg);}
+  thead th .arrow{font-size:10px; color:var(--accent); margin-left:4px;}
+  tbody td{padding:8px 10px; border-bottom:1px solid #eef0f2; white-space:nowrap;}
+  tbody tr:hover{background:#fafbfc;}
+  .pill{
+    display:inline-block; padding:2px 8px; border-radius:12px; font-weight:600;
+    font-size:12px; color:#fff; min-width:52px; text-align:center;
+  }
+  .route-cell{font-weight:600;}
+  .airline-tag{
+    font-size:11px; padding:2px 7px; border-radius:6px; background:var(--accent-bg);
+    color:var(--accent); font-weight:600;
+  }
+  .empty-cell{color:#c5c9cf;}
+  .price-cell{color:#374151;}
+  .month-price{display:none; font-size:11px; color:var(--muted); margin-top:3px; font-weight:400;}
+  body.show-monthly-prices .month-price{display:block;}
+  .toggle{display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer; user-select:none; color:var(--text);}
+  .toggle input{cursor:pointer;}
+  footer{margin-top:18px; font-size:12px; color:var(--muted); text-align:center;}
+  @media (max-width:640px){
+    .toolbar{position:static;}
+    select, input[type="text"]{min-width:120px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>İç Hat Doluluk ve Fiyat Konsolide Görünümü</h1>
+    <p id="subtitle">Yükleniyor…</p>
+  </header>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="toolbar">
+    <div class="seg" id="airlineSeg"></div>
+    <select id="pointSelect"><option value="">1. Nokta (tümü)</option></select>
+    <select id="pointSelect2" disabled><option value="">Önce 1. noktayı seçin</option></select>
+    <input type="text" id="search" placeholder="Şehir veya hat ara…">
+    <label class="toggle"><input type="checkbox" id="showPricesToggle"> Aylık fiyatları göster</label>
+    <div class="spacer"></div>
+    <span class="count-pill" id="countPill"></span>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr id="headerRow"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <footer id="footer"></footer>
+</div>
+
+<script>
+const MONTH_ORDER = {"Ocak":1,"Şubat":2,"Mart":3,"Nisan":4,"Mayıs":5,"Haziran":6,"Temmuz":7,"Ağustos":8,"Eylül":9,"Ekim":10,"Kasım":11,"Aralık":12};
+const AIRLINE_COLORS = {"THY":"#1f6feb","Pegasus":"#d6336c","AJet":"#0c8599","SunExpress":"#e8590c"};
+
+let RAW = [];
+let MONTHS = [];
+let state = { airline: "Tümü", point: "", point2: "", search: "", sortKey: "guzergah", sortDir: 1 };
+
+function airlineFilteredRaw(){
+  return state.airline === "Tümü" ? RAW : RAW.filter(r=>r.havayolu===state.airline);
+}
+
+function dolulukColor(v){
+  if (v === null || v === undefined) return null;
+  const t = Math.max(0, Math.min(1, (v - 0.4) / 0.6)); // 40%->0, 100%->1
+  const hue = 0 + t * 120; // red -> green
+  return `hsl(${hue.toFixed(0)},65%,42%)`;
+}
+function fmtPct(v){ return v === null || v === undefined ? "" : (v*100).toFixed(1) + "%"; }
+function fmtTL(v){ return v === null || v === undefined ? "" : Math.round(v).toLocaleString("tr-TR") + " TL"; }
+
+function buildRoutes(rows){
+  const map = new Map();
+  for (const r of rows){
+    const key = r.havayolu + "||" + r.guzergah;
+    if (!map.has(key)) map.set(key, {
+      havayolu:r.havayolu, guzergah:r.guzergah, nokta1:r.nokta1, nokta2:r.nokta2, months:{}
+    });
+    map.get(key).months[r.ay] = { doluluk:r.doluluk, fiyat:r.fiyat };
+  }
+  for (const route of map.values()){
+    const vals = Object.values(route.months);
+    route.avgDoluluk = vals.reduce((a,m)=>a+m.doluluk,0)/vals.length;
+    route.avgFiyat = vals.reduce((a,m)=>a+m.fiyat,0)/vals.length;
+  }
+  return [...map.values()];
+}
+
+function applyFilters(routes){
+  let out = routes;
+  if (state.airline !== "Tümü") out = out.filter(r=>r.havayolu===state.airline);
+  if (state.point) out = out.filter(r=>r.nokta1===state.point || r.nokta2===state.point);
+  if (state.point2) out = out.filter(r=>r.nokta1===state.point2 || r.nokta2===state.point2);
+  if (state.search.trim()){
+    const q = state.search.toLocaleLowerCase("tr");
+    out = out.filter(r=>
+      r.guzergah.toLocaleLowerCase("tr").includes(q) ||
+      r.havayolu.toLocaleLowerCase("tr").includes(q)
+    );
+  }
+  return out;
+}
+
+function sortRoutes(routes){
+  const k = state.sortKey, dir = state.sortDir;
+  return [...routes].sort((a,b)=>{
+    let av, bv;
+    if (k === "avgDoluluk" || k === "avgFiyat"){ av=a[k]; bv=b[k]; }
+    else if (k.startsWith("ay:")){
+      const ay = k.slice(3);
+      av = a.months[ay] ? a.months[ay].doluluk : -1;
+      bv = b.months[ay] ? b.months[ay].doluluk : -1;
+    } else { av = (a[k]||"").toString(); bv = (b[k]||"").toString(); }
+    if (av < bv) return -1*dir;
+    if (av > bv) return 1*dir;
+    return 0;
+  });
+}
+
+function renderCards(rows){
+  const byAirline = {};
+  for (const r of rows){
+    (byAirline[r.havayolu] ??= []).push(r);
+  }
+  const cards = document.getElementById("cards");
+  cards.innerHTML = "";
+  const total = document.createElement("div");
+  const totalDol = rows.reduce((a,r)=>a+r.doluluk,0)/rows.length;
+  const totalFiyat = rows.reduce((a,r)=>a+r.fiyat,0)/rows.length;
+  const totalRoutes = new Set(rows.map(r=>r.havayolu+"||"+r.guzergah)).size;
+  total.className = "card";
+  total.innerHTML = `<div class="label">GENEL TOPLAM</div><div class="value">${fmtPct(totalDol)}</div><div class="sub">${fmtTL(totalFiyat)} · ${totalRoutes} hat</div>`;
+  cards.appendChild(total);
+
+  for (const airline of Object.keys(AIRLINE_COLORS)){
+    const arows = byAirline[airline];
+    if (!arows) continue;
+    const dol = arows.reduce((a,r)=>a+r.doluluk,0)/arows.length;
+    const fiyat = arows.reduce((a,r)=>a+r.fiyat,0)/arows.length;
+    const routeCount = new Set(arows.map(r=>r.guzergah)).size;
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `<div class="label">${airline}</div><div class="value" style="color:${AIRLINE_COLORS[airline]}">${fmtPct(dol)}</div><div class="sub">${fmtTL(fiyat)} · ${routeCount} hat</div>`;
+    cards.appendChild(card);
+  }
+}
+
+function renderHeader(){
+  const headerRow = document.getElementById("headerRow");
+  const cols = [
+    {key:"havayolu", label:"Havayolu"},
+    {key:"guzergah", label:"Güzergah"},
+    ...MONTHS.map(m=>({key:"ay:"+m, label:m})),
+    {key:"avgDoluluk", label:"Ort. Doluluk"},
+    {key:"avgFiyat", label:"Ort. Fiyat"},
+  ];
+  headerRow.innerHTML = "";
+  for (const c of cols){
+    const th = document.createElement("th");
+    let arrow = "";
+    if (state.sortKey === c.key) arrow = `<span class="arrow">${state.sortDir===1?"▲":"▼"}</span>`;
+    th.innerHTML = c.label + arrow;
+    th.onclick = ()=>{
+      if (state.sortKey === c.key) state.sortDir *= -1;
+      else { state.sortKey = c.key; state.sortDir = 1; }
+      render();
+    };
+    headerRow.appendChild(th);
+  }
+}
+
+function renderTable(routes){
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = "";
+  for (const r of routes){
+    const tr = document.createElement("tr");
+    let html = `<td><span class="airline-tag" style="color:${AIRLINE_COLORS[r.havayolu]||'#555'};background:${AIRLINE_COLORS[r.havayolu]||'#eee'}22">${r.havayolu}</span></td>`;
+    html += `<td class="route-cell">${r.guzergah}</td>`;
+    for (const m of MONTHS){
+      const v = r.months[m];
+      if (v){
+        html += `<td><span class="pill" style="background:${dolulukColor(v.doluluk)}">${fmtPct(v.doluluk)}</span><div class="month-price">${fmtTL(v.fiyat)}</div></td>`;
+      } else {
+        html += `<td class="empty-cell">—</td>`;
+      }
+    }
+    html += `<td><span class="pill" style="background:${dolulukColor(r.avgDoluluk)}">${fmtPct(r.avgDoluluk)}</span></td>`;
+    html += `<td class="price-cell">${fmtTL(r.avgFiyat)}</td>`;
+    tr.innerHTML = html;
+    tbody.appendChild(tr);
+  }
+}
+
+function renderAirlineSeg(){
+  const seg = document.getElementById("airlineSeg");
+  const airlines = ["Tümü", ...Object.keys(AIRLINE_COLORS).filter(a=>RAW.some(r=>r.havayolu===a))];
+  seg.innerHTML = "";
+  for (const a of airlines){
+    const btn = document.createElement("button");
+    btn.textContent = a;
+    if (state.airline === a) btn.classList.add("active");
+    btn.onclick = ()=>{ state.airline = a; render(); };
+    seg.appendChild(btn);
+  }
+}
+
+function renderPointSelect(){
+  const sel = document.getElementById("pointSelect");
+  const points = new Set();
+  RAW.forEach(r=>{ points.add(r.nokta1); points.add(r.nokta2); });
+  const sorted = [...points].sort((a,b)=>a.localeCompare(b,"tr"));
+  sel.innerHTML = `<option value="">1. Nokta (tümü)</option>` + sorted.map(p=>`<option value="${p}">${p}</option>`).join("");
+  sel.value = state.point;
+  sel.onchange = ()=>{ state.point = sel.value; state.point2 = ""; render(); };
+}
+
+function renderPointSelect2(){
+  const sel = document.getElementById("pointSelect2");
+  if (!state.point){
+    sel.innerHTML = `<option value="">Önce 1. noktayı seçin</option>`;
+    sel.value = "";
+    sel.disabled = true;
+    sel.onchange = null;
+    return;
+  }
+  const connected = new Set();
+  airlineFilteredRaw().forEach(r=>{
+    if (r.nokta1 === state.point) connected.add(r.nokta2);
+    if (r.nokta2 === state.point) connected.add(r.nokta1);
+  });
+  const sorted = [...connected].sort((a,b)=>a.localeCompare(b,"tr"));
+  sel.disabled = false;
+  sel.innerHTML = `<option value="">Tüm bağlantılar (${sorted.length})</option>` + sorted.map(p=>`<option value="${p}">${p}</option>`).join("");
+  sel.value = state.point2;
+  sel.onchange = ()=>{ state.point2 = sel.value; render(); };
+}
+
+function render(){
+  renderAirlineSeg();
+  renderPointSelect2();
+  let filteredRows = airlineFilteredRaw();
+  if (state.point) filteredRows = filteredRows.filter(r=>r.nokta1===state.point||r.nokta2===state.point);
+  if (state.point2) filteredRows = filteredRows.filter(r=>r.nokta1===state.point2||r.nokta2===state.point2);
+  renderCards(filteredRows);
+
+  let routes = buildRoutes(RAW);
+  routes = applyFilters(routes);
+  routes = sortRoutes(routes);
+
+  renderHeader();
+  renderTable(routes);
+  document.getElementById("countPill").textContent = `${routes.length} hat gösteriliyor`;
+}
+
+fetch("./data.json")
+  .then(res=>res.json())
+  .then(payload=>{
+    RAW = payload.veri;
+    MONTHS = [...new Set(RAW.map(r=>r.ay))].sort((a,b)=>MONTH_ORDER[a]-MONTH_ORDER[b]);
+    document.getElementById("subtitle").textContent =
+      `Kapsam: ${payload.meta.kapsam} · ${payload.meta.havayollari.join(", ")} · ${payload.meta.satirSayisi} satır`;
+    document.getElementById("footer").textContent =
+      `Son güncelleme: ${payload.meta.olusturulma}. Yeni ay verisi eklendiğinde bu sayfa otomatik güncel veriyi gösterir, kod değişikliği gerekmez.`;
+    document.getElementById("search").addEventListener("input", e=>{ state.search = e.target.value; render(); });
+    document.getElementById("showPricesToggle").addEventListener("change", e=>{
+      document.body.classList.toggle("show-monthly-prices", e.target.checked);
+    });
+    renderPointSelect();
+    render();
+  })
+  .catch(err=>{
+    const isFileProtocol = window.location.protocol === "file:";
+    document.getElementById("subtitle").textContent = isFileProtocol
+      ? "Veri yüklenemedi: Bu dosya doğrudan çift tıklanarak (file://) açıldığı için tarayıcı data.json'ı okumaya izin vermiyor. Bu sayfayı bir web sunucusu üzerinden (http:// veya https://) açmanız gerekiyor — yerelde denemek için klasörde 'python3 -m http.server' çalıştırıp http://localhost:8000 adresinden bakabilirsiniz."
+      : "Veri yüklenemedi: data.json dosyasının bu sayfa ile aynı klasörde, aynı isimle (büyük/küçük harf dahil) bulunduğundan emin olun. Detay için tarayıcı konsoluna (F12) bakın: " + err.message;
+    console.error(err);
+  });
+</script>
+</body>
+</html>
